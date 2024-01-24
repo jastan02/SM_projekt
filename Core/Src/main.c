@@ -20,6 +20,7 @@
 #include "main.h"
 #include "string.h"
 #include <stdio.h>
+#include "SensorController.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -87,81 +88,13 @@ static void MX_TIM14_Init(void);
 #define NUM_READINGS 10
 #define MIN_VALID_VALUE 2
 #define MAX_VALID_VALUE 60
-
+SensorController sensorController;
 int readIndex = 0;
 uint32_t readings[NUM_READINGS];
 uint32_t total = 0;
 uint32_t average = 0;
 char tablica[10];
 
-void initReadingsArray() {
-    for (int i = 0; i < NUM_READINGS; i++) {
-        readings[i] = 0;
-    }
-    total = 0;
-    readIndex = 0;
-    average = 0;
-}
-
-uint32_t movingAverageFilter(uint32_t newValue)
-{
-    if (newValue < MIN_VALID_VALUE || newValue > MAX_VALID_VALUE)
-    {
-        return average;
-    }
-
-    total = total - readings[readIndex] + newValue;
-    readings[readIndex] = newValue;
-    readIndex = (readIndex + 1) % NUM_READINGS;
-    average = total / NUM_READINGS;
-
-    return average;
-}
-
-
-//czujnik/////////////////////
-float value=0;
-
-float czujnik()
-{
-	uint32_t start = HAL_TIM_ReadCapturedValue(&htim4, TIM_CHANNEL_1);
-	uint32_t stop = HAL_TIM_ReadCapturedValue(&htim4, TIM_CHANNEL_2);
-    uint32_t newValue = (stop - start) / 58.0f;
-
-    uint32_t filteredValue = movingAverageFilter(newValue);
-    value = newValue;
-    return filteredValue;
-
-}
-
-
-//Redulator PID/////////////////////////////////
-
-float Kp = 38;  // Wzmocnienie proporcjonalne
-float Ki = 0.01;  // Wzmocnienie całkujące
-float Kd = 1.6;   // Wzmocnienie różniczkujące
-float Setpoint = 25;
-
-float error = 0;       // Bieżący błąd
-float prevError = 0;   // Poprzedni błąd
-float integral = 0;    // Skumulowana wartość błędu
-float derivative = 0;  // Wartość pochodnej błędu
-
-float lastTime=2;
-float czas=1;
-
-float pidController(float setpoint, float processVariable) {
-    czas=HAL_GetTick();
-	error = setpoint - processVariable;
-    integral += error * (czas- lastTime);
-    derivative = ((error - prevError) / (czas - lastTime));
-
-    float output = (Kp * error) + (Ki * integral) + (Kd * derivative);
-    prevError = error;
-    lastTime = HAL_GetTick();
-
-    return output;
-}
 
 
 //Obsluga serwomechanizmu////////////////////////////////
@@ -169,30 +102,6 @@ float pidController(float setpoint, float processVariable) {
 #define MIN_PULSE_WIDTH 600   // Minimalna szerokość impulsu
 #define MAX_PULSE_WIDTH 1800  // Maksymalna szerokość impulsu
 
-void setServoPWMFromPID(float pidOutput)
-{
-    float scaledOutput =1200- (pidOutput);
-
-    if (scaledOutput < MIN_PULSE_WIDTH)
-    {
-        scaledOutput = MIN_PULSE_WIDTH;
-    }
-    else if (scaledOutput > MAX_PULSE_WIDTH)
-    {
-        scaledOutput = MAX_PULSE_WIDTH;
-    }
-
-    __HAL_TIM_SET_COMPARE(&htim14, TIM_CHANNEL_1, (uint16_t)scaledOutput);
-}
-
-
-
-
-void SendDataOverUART(float value, float pidOutput) {
-    char buffer[100];
-    sprintf(buffer, "Sensor: %.2f, Kp: %.2f, Ki: %.2f, Kd: %.2f\r\n", value, Kp, Ki, Kd);
-    HAL_UART_Transmit(&huart3, (uint8_t*)buffer, strlen(buffer), 100);
-}
 
 
 
@@ -202,30 +111,8 @@ void SendDataOverUART(float value, float pidOutput) {
 char rxBuffer[RX_BUFFER_SIZE];
 uint32_t rxIndex = 0;
 
-void ProcessReceivedData(const char* data);
-
-// Callback odbioru danych UART
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart == &huart3) {
-        char receivedChar = (char)(huart->Instance->RDR & 0xFF);
-
-        if (receivedChar == '\n' || rxIndex >= RX_BUFFER_SIZE - 1) {
-            rxBuffer[rxIndex] = '\0';
-            ProcessReceivedData(rxBuffer);
-
-            memset(rxBuffer, 0, RX_BUFFER_SIZE);  // Opcjonalnie wyczyść cały bufor
-            rxIndex = 0;
-        } else if (receivedChar == '\n')
-		{
-        	rxIndex = 0;
-		}
-        else
-        {
-            rxBuffer[rxIndex++] = receivedChar;
-        }
-
-        HAL_UART_Receive_IT(&huart3, (uint8_t *)&rxBuffer[rxIndex], 1);
-    }
+    SensorController_HAL_UART_RxCpltCallback(&sensorController, huart);
 }
 
 
@@ -234,22 +121,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 
 
 // Funkcja do przetwarzania przychodzących danych
-void ProcessReceivedData(const char* data) {
-    // Tymczasowe zmienne do przechowywania odczytanych wartości
-    float tempKp, tempKi, tempKd, tempSetpoint;
-
-    // Sprawdzanie, czy dane są w oczekiwanym formacie i czy odczyt się powiódł
-    if (sscanf(data, "Set Kp:%f Ki:%f Kd:%f Setpoint:%f", &tempKp, &tempKi, &tempKd, &tempSetpoint) == 4) {
-        // Aktualizacja wartości Kp, Ki, Kd, Setpoint
-        Kp = tempKp;
-        Ki = tempKi;
-        Kd = tempKd;
-        Setpoint = tempSetpoint;
-
-        // Możesz dodać tutaj dodatkową logikę, np. wyświetlić odczytane wartości
-        // printf("Odczytano: Kp=%f, Ki=%f, Kd=%f, Setpoint=%f\n", Kp, Ki, Kd, Setpoint);
-    }
-}
 
 
 /* USER CODE END PFP */
@@ -259,6 +130,7 @@ void ProcessReceivedData(const char* data) {
 float pidprocces;
 float nowaw;
 /* USER CODE END 0 */
+
 
 /**
   * @brief  The application entry point.
@@ -273,47 +145,34 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+	HAL_Init();
+	SystemClock_Config();
+	MX_GPIO_Init();
+	MX_ETH_Init();
+	MX_USART3_UART_Init();
+	MX_USB_OTG_FS_PCD_Init();
+	MX_TIM4_Init();
+	MX_TIM14_Init();
 
-  /* USER CODE BEGIN Init */
+	SensorController_Init(&sensorController, &htim4, &htim14, &huart3);
+	HAL_TIM_Base_Start_IT(&htim4);
+	HAL_TIM_IC_Start(&htim4, TIM_CHANNEL_1);
+	HAL_TIM_IC_Start(&htim4, TIM_CHANNEL_2);
+	HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_3);
+	HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1);
+	HAL_UART_Receive_IT(&huart3, (uint8_t*)&rxBuffer, 1);
 
-  /* USER CODE END Init */
 
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_ETH_Init();
-  MX_USART3_UART_Init();
-  MX_USB_OTG_FS_PCD_Init();
-  MX_TIM4_Init();
-  MX_TIM14_Init();
-  /* USER CODE BEGIN 2 */
-  initReadingsArray();
-  HAL_TIM_Base_Start_IT(&htim4);
-  HAL_TIM_IC_Start(&htim4, TIM_CHANNEL_1);
-  HAL_TIM_IC_Start(&htim4, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_3);
-  HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1);
-
-  HAL_UART_Receive_IT(&huart3, (uint8_t*)&rxBuffer, 1);
 
   /* USER CODE END 2 */
-  value=50;
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  nowaw=czujnik();
-	  pidprocces=pidController(Setpoint, nowaw);
-	  setServoPWMFromPID(pidprocces);
-	  lastTime=HAL_GetTick();
-	  SendDataOverUART(nowaw, pidprocces);
+	  SensorController_Update(&sensorController);
+	  SensorController_ProcessPID(&sensorController);
+	  SensorController_SendDataOverUART(&sensorController);
 	  HAL_Delay(1);
 
 
