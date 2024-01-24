@@ -45,6 +45,16 @@ def write_to_stm():
         ser.write(command.encode('utf-8'))
         time.sleep(1)  # Opóźnienie
 
+# Funkcja do zapisywania danych do pliku CSV
+def save_to_csv():
+    filename = f"balancing_car_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    with open(filename, 'w', newline='') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(['Time', 'Sensor Value'])
+        for x, y in zip(x_values, y_values):
+            csvwriter.writerow([x, y])
+    print(f"Dane zostały zapisane do pliku: {filename}")
+
 
 # Funkcja resetująca wykres
 def reset_plot():
